@@ -65,6 +65,40 @@ typedef struct SyncClocks {
 #define MAX_DELAY_PRINT_RATE 2000000000LL
 #define MAX_NB_PRINTS 100
 
+#define GDB_EXCEPTION_GATE_OPEN (-1)
+
+static int gdb_exception_gate = GDB_EXCEPTION_GATE_OPEN;
+
+static GDBExceptionReport cpu_gdb_exception_report(CPUState *cpu)
+{
+    CPUClass *cc = CPU_GET_CLASS(cpu);
+    int owner;
+
+    if (!cc->tcg_ops->gdb_exception_report ||
+        !cc->tcg_ops->gdb_exception_report(cpu)) {
+        return GDB_EXCEPTION_NONE;
+    }
+
+    owner = qatomic_read(&gdb_exception_gate);
+    if (owner == cpu->cpu_index) {
+        return GDB_EXCEPTION_DELIVER;
+    }
+    if (owner != GDB_EXCEPTION_GATE_OPEN) {
+        return GDB_EXCEPTION_WAIT;
+    }
+    if (qatomic_cmpxchg(&gdb_exception_gate, GDB_EXCEPTION_GATE_OPEN,
+                        cpu->cpu_index) == GDB_EXCEPTION_GATE_OPEN) {
+        return GDB_EXCEPTION_REPORT;
+    }
+    return GDB_EXCEPTION_WAIT;
+}
+
+static void cpu_gdb_exception_gate_open(CPUState *cpu)
+{
+    qatomic_cmpxchg(&gdb_exception_gate, cpu->cpu_index,
+                    GDB_EXCEPTION_GATE_OPEN);
+}
+
 static int64_t max_delay;
 static int64_t max_advance;
 
@@ -663,6 +697,10 @@ static inline void cpu_handle_debug_exception(CPUState *cpu)
 
 static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
 {
+#ifndef CONFIG_USER_ONLY
+    GDBExceptionReport gdb_exception_report = GDB_EXCEPTION_NONE;
+#endif
+
     if (cpu->exception_index < 0) {
 #ifndef CONFIG_USER_ONLY
         if (replay_has_exception()
@@ -674,6 +712,23 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
 #endif
         return false;
     }
+#ifndef CONFIG_USER_ONLY
+    if (cpu->exception_index < EXCP_INTERRUPT) {
+        gdb_exception_report = cpu_gdb_exception_report(cpu);
+    }
+    if (unlikely(gdb_exception_report == GDB_EXCEPTION_REPORT)) {
+        qemu_log_mask(CPU_LOG_INT,
+                      "%s: redirect exception %d to gdb debug on CPU %d\n",
+                      __func__, cpu->exception_index, cpu->cpu_index);
+        *ret = EXCP_DEBUG;
+        cpu_handle_debug_exception(cpu);
+        return true;
+    }
+    if (unlikely(gdb_exception_report == GDB_EXCEPTION_WAIT)) {
+        *ret = EXCP_INTERRUPT;
+        return true;
+    }
+#endif
     if (cpu->exception_index >= EXCP_INTERRUPT) {
         /* exit request from the cpu execution loop */
         *ret = cpu->exception_index;
@@ -701,6 +756,9 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
             cc->tcg_ops->do_interrupt(cpu);
             qemu_mutex_unlock_iothread();
             cpu->exception_index = -1;
+            if (gdb_exception_report == GDB_EXCEPTION_DELIVER) {
+                cpu_gdb_exception_gate_open(cpu);
+            }
 
             if (unlikely(cpu->singlestep_enabled)) {
                 /*

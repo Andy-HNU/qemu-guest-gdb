@@ -361,6 +361,7 @@ typedef struct GDBState {
 #else
     CharBackend chr;
     Chardev *mon_chr;
+    bool connected;
 #endif
     bool multiprocess;
     GDBProcess *processes;
@@ -437,7 +438,16 @@ static int get_char(void)
  */
 static bool gdb_attached(void)
 {
-    return gdbserver_state.init && gdbserver_state.c_cpu;
+    return gdb_is_attached() && gdbserver_state.c_cpu;
+}
+
+bool gdb_is_attached(void)
+{
+#ifdef CONFIG_USER_ONLY
+    return gdbserver_state.init && gdbserver_state.fd >= 0;
+#else
+    return gdbserver_state.init && gdbserver_state.connected;
+#endif
 }
 
 static enum {
@@ -3322,6 +3332,8 @@ static void gdb_chr_event(void *opaque, QEMUChrEvent event)
 
     switch (event) {
     case CHR_EVENT_OPENED:
+        s->connected = true;
+
         /* Start with first process attached, others detached */
         for (i = 0; i < s->process_num; i++) {
             s->processes[i].attached = !i;
@@ -3333,6 +3345,11 @@ static void gdb_chr_event(void *opaque, QEMUChrEvent event)
         vm_stop(RUN_STATE_PAUSED);
         replay_gdb_attached();
         gdb_has_xml = false;
+        break;
+    case CHR_EVENT_CLOSED:
+        s->connected = false;
+        s->c_cpu = NULL;
+        s->g_cpu = NULL;
         break;
     default:
         break;

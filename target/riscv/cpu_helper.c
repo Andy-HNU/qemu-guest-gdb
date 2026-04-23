@@ -23,6 +23,7 @@
 #include "cpu.h"
 #include "pmu.h"
 #include "exec/exec-all.h"
+#include "exec/gdbstub.h"
 #include "instmap.h"
 #include "tcg/tcg-op.h"
 #include "trace.h"
@@ -766,6 +767,7 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
     bool use_background = false;
     hwaddr ppn;
     RISCVCPU *cpu = env_archcpu(env);
+    CPUState *cs = env_cpu(env);
     int napot_bits = 0;
     target_ulong napot_mask;
 
@@ -861,7 +863,6 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
       g_assert_not_reached();
     }
 
-    CPUState *cs = env_cpu(env);
     int va_bits = PGSHIFT + levels * ptidxbits + widened;
     target_ulong mask, masked_msbs;
 
@@ -1116,6 +1117,29 @@ static void raise_mmu_exception(CPURISCVState *env, target_ulong address,
     env->badaddr = address;
     env->two_stage_lookup = two_stage;
     env->two_stage_indirect_lookup = two_stage_indirect;
+}
+
+bool riscv_cpu_gdb_exception_report(CPUState *cs)
+{
+#ifndef CONFIG_USER_ONLY
+    RISCVCPU *cpu = RISCV_CPU(cs);
+    uint32_t exception;
+
+    if (!gdb_is_attached() || cs->exception_index < 0 ||
+        (cs->exception_index & RISCV_EXCP_INT_FLAG)) {
+        return false;
+    }
+
+    exception = cs->exception_index & RISCV_EXCP_INT_MASK;
+    if (exception < 64 &&
+        (cpu->cfg.gdb_exception_report_mask & (1ULL << exception))) {
+        return true;
+    }
+
+    return false;
+#else
+    return false;
+#endif
 }
 
 hwaddr riscv_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)

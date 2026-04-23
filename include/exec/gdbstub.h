@@ -227,6 +227,13 @@ static inline uint8_t * gdb_get_reg_ptr(GByteArray *buf, int len)
 int gdbserver_start(const char *port_or_device);
 
 /**
+ * gdb_is_attached:
+ *
+ * Return true if a remote GDB connection is currently attached to the stub.
+ */
+bool gdb_is_attached(void);
+
+/**
  * gdb_exit: exit gdb session, reporting inferior status
  * @code: exit code reported
  *

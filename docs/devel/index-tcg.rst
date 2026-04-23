@@ -9,6 +9,7 @@ are only implementing things for HW accelerated hypervisors.
    :maxdepth: 2
 
    tcg
+   guest-gdb-exception-report
    decodetree
    multi-thread-tcg
    tcg-icount

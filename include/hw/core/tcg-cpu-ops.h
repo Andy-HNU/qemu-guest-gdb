@@ -12,6 +12,13 @@
 
 #include "hw/core/cpu.h"
 
+typedef enum GDBExceptionReport {
+    GDB_EXCEPTION_NONE,
+    GDB_EXCEPTION_REPORT,
+    GDB_EXCEPTION_DELIVER,
+    GDB_EXCEPTION_WAIT,
+} GDBExceptionReport;
+
 struct TCGCPUOps {
     /**
      * @initialize: Initalize TCG state
@@ -67,6 +74,11 @@ struct TCGCPUOps {
 #ifdef CONFIG_SOFTMMU
     /** @cpu_exec_interrupt: Callback for processing interrupts in cpu_exec */
     bool (*cpu_exec_interrupt)(CPUState *cpu, int interrupt_request);
+    /**
+     * @gdb_exception_report: Return true when the pending target exception
+     * should be reported to GDB before the guest handles it.
+     */
+    bool (*gdb_exception_report)(CPUState *cpu);
     /**
      * @tlb_fill: Handle a softmmu tlb miss
      *
